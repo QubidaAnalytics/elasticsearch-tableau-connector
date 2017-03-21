@@ -67,6 +67,8 @@ require('load-grunt-tasks')(grunt);
             { src: 'bower_components/jquery/dist/jquery.js', dest: 'public/jquery.js', expand: false },
             { src: 'bower_components/toastr/toastr.js', dest: 'public/toastr.js', expand: false },
             { src: 'bower_components/toastr/toastr.css', dest: 'public/toastr.css', expand: false },
+            { src: 'bower_components/elasticsearch/elasticsearch.js', dest: 'public/elasticsearch.js', expand: false },
+            { src: 'bower_components/elasticsearch/elasticsearch.jquery.js', dest: 'public/elasticsearch.jquery.js', expand: false },
             { src: 'bower_components/lodash/lodash.js', dest: 'public/lodash.js', expand: false },
             { src: 'bower_components/knockout/dist/knockout.debug.js', dest: 'public/knockout.js', expand: false },
             { src: 'bower_components/moment/min/moment.min.js', dest: 'public/moment.js', expand: false },

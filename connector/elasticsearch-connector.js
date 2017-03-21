@@ -54,6 +54,7 @@ var elasticsearchConnector = (function () {
         }
     }
 
+    //Gets columns headers or mapping for selected index
     var getElasticsearchTypeMapping = function (connectionData, cb) {
 
         console.log('[getElasticsearchTypeMapping] invoking...');
@@ -66,47 +67,29 @@ var elasticsearchConnector = (function () {
         }
         if(!connectionData.elasticsearchType){
             return abort("Must provide valid Type");
-        }
+            
+        }  
 
-        $.ajax(connectionData.elasticsearchUrl + '/' + connectionData.elasticsearchIndex + '/' +
-            connectionData.elasticsearchType + '/_mapping', {
-                context: connectionData,
-                dataType: 'json',
-                beforeSend: function (xhr) {
-                    beforeSendAddAuthHeader(xhr, connectionData);
-                },
-                success: function (data) {
+        var client = elasticsearch.Client({
+            hosts: connectionData.elasticsearchUrl,
+            keepAlive: true
+        });   
+   
 
-                    var connectionData = this;
-                    console.log('[getElasticsearchTypeMapping] ', connectionData);
+        client.indices.getMapping({
+            index: connectionData.elasticsearchIndex            
+        }, function (error, data) {
+            if (error) { return handleError(res, error); }
+            else {
 
-                    var indexName = connectionData.elasticsearchIndex;
-
-                    if (cb) {
-                        cb(null, data, connectionData);
-                    }
-
-
-                },
-                error: function (xhr, ajaxOptions, err) {
-                    var err;
-                    if (xhr.status == 0) {
-                        err = 'Unable to get Elasticsearch types, unable to connect to host or CORS request was denied';
-                    }
-                    else {
-                        err = 'Unable to get Elasticsearch types, status code: ' + xhr.status + '; ' + xhr.responseText + '\n' + err;
-                    }
-
-                    console.error(err);
-
-                    if (cb) {
-                        cb(err);
-                    }
-
-                }
-            });
-    }
-    
+                console.log('[getElasticsearchTypeMapping] ', connectionData);
+                
+                if (cb) {
+                    cb(null, data, connectionData);
+                }   
+            }
+        });     
+    }    
 
     function abort(errorMessage, kill) {
 
@@ -117,13 +100,11 @@ var elasticsearchConnector = (function () {
             console.error('[ElasticsearchConnector] - calling tableau abort');
             tableau.abortWithError(errorMessage);
         }
-
     }
 
     //
     // Connector definition
-    // 
-
+    //
     var myConnector = tableau.makeConnector();
 
     myConnector.getSchema = function (schemaCallback) {
@@ -234,7 +215,6 @@ var elasticsearchConnector = (function () {
     //
     // Setup connector UI
     //
-
     $(document).ready(function () {
 
         console.log('[$.document.ready] fired...');
@@ -414,8 +394,8 @@ var elasticsearchConnector = (function () {
 
                 break;
         }
-
     }
+
 
     var buildAggregationRequest = function(data){
 
@@ -623,35 +603,25 @@ var elasticsearchConnector = (function () {
 
         requestData.size = connectionData.batchSize;
 
-        var connectionUrl = connectionData.elasticsearchUrl + '/' + connectionData.elasticsearchIndex + '/' +
-            connectionData.elasticsearchType + '/_search?scroll=5m';
+        var client = elasticsearch.Client({
+            hosts: connectionData.elasticsearchUrl,            
+            keepAlive: true
+        });        
 
-        var xhr = $.ajax({
-            url: connectionUrl,
-            method: 'POST',
-            processData: false,
-            data: JSON.stringify(requestData),
-            dataType: 'json',
-            beforeSend: function (xhr) {
-                beforeSendAddAuthHeader(xhr, connectionData);
-            },
-            success: function (data) {
+        client.search({
+            index: connectionData.elasticsearchIndex,
+            scroll: '30s'
+        }, function (error, response) {
+            
+             var result = processSearchResults(tableauDataMode, table, response);
 
-                var result = processSearchResults(tableauDataMode, table, data);
+                if(error)
+                cb('Error creating Elasticsearch scroll window, unable to connect to host or CORS request was denied', true);
 
                 if(cb){
                     cb(null, result);
-                }
-            },
-            error: function (xhr, ajaxOptions, err) {
-                if (xhr.status == 0) {
-                    cb('Error creating Elasticsearch scroll window, unable to connect to host or CORS request was denied', true);
-                }
-                else {
-                    cb("Error creating Elasticsearch scroll window, status code:  " + xhr.status + '; ' + xhr.responseText + "\n" + err, true);
-                }
-            }
-        });
+                }            
+        });        
     };
 
     var getRemainingScrollResults = function (tableauDataMode, table, scrollId, cb) {
@@ -660,26 +630,19 @@ var elasticsearchConnector = (function () {
         if (!connectionData.elasticsearchUrl) {
             if(cb) cb("Elasticsearch URL is required");
             return;
-        }
+        }       
 
-        var connectionUrl = connectionData.elasticsearchUrl + '/_search/scroll';
+         var client = elasticsearch.Client({
+            hosts: connectionData.elasticsearchUrl,            
+            keepAlive: true
+        });  
 
-        var requestData = {
-            scroll: '5m',
-            scroll_id: scrollId
-        };
-
-        var xhr = $.ajax({
-            url: connectionUrl,
-            method: 'POST',
-            processData: false,
-            data: JSON.stringify(requestData),
-            dataType: 'json',
-            beforeSend: function (xhr) {
-                beforeSendAddAuthHeader(xhr, connectionData);
-            },
-            success: function (data) {
-                var result = processSearchResults(tableauDataMode, table, data);
+        client.scroll({
+            scrollId: scrollId,
+            scroll: '30s'
+            }, function (error, response) {
+            
+             var result = processSearchResults(tableauDataMode, table, response);
 
                 if (result.more) {
                     getRemainingScrollResults(tableauDataMode, table, result.scrollId, function (err, innerResult) {
@@ -690,6 +653,9 @@ var elasticsearchConnector = (function () {
                         if(!tableauDataMode){
                             innerResult.results = innerResult.results.concat(result.results);
                         }
+
+                        if(error)
+                        cb('Error retrieving Elasticsearch scroll window, unable to connect to host or CORS request was denied', true);
                         
                         if (cb) {
                             cb(null, innerResult);
@@ -702,19 +668,8 @@ var elasticsearchConnector = (function () {
                     if (cb) {
                         cb(null, result);
                     }
-                }
-
-
-            },
-            error: function (xhr, ajaxOptions, err) {
-                if (xhr.status == 0) {
-                    cb('Error processing next scroll result, unable to connect to host or CORS request was denied', true);
-                }
-                else {
-                    cb("Error processing next scroll result, status code:  " + xhr.status + '; ' + xhr.responseText + "\n" + err, true);
-                }
-            }
-        });
+                }           
+        });        
     };
 
     var processSearchResults = function (tableauDataMode, table, data) {
