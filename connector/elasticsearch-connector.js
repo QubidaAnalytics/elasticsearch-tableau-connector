@@ -540,36 +540,55 @@ var elasticsearchConnector = (function () {
         return aggsQuery;
     };
 
+    //Retrieve the data from elasticsearch according to the parameters inserted by te user
     var getSearchResponse = function (tableauDataMode, table, cb) {
         console.log('[getSearchResponse]...');
 
-        openSearchScrollWindow(tableauDataMode, table, function (err, result) {
-            if (err) {
-                abort(err, true);
+        var connectionData = JSON.parse(tableau.connectionData);
+        
+        var client = elasticsearch.Client({
+            hosts: connectionData.elasticsearchUrl,            
+            keepAlive: true
+        });   
+
+        var completeResult = [];
+        var limit = connectionData.limit;        
+
+        // first we do a search, and specify a scroll timeout
+        client.search({
+            index: connectionData.elasticsearchIndex ,
+            scroll: '1m', // keep the search results "scrollable" for 30 seconds
+            size: connectionData.batchSize
+        }, function getMoreUntilDone(error, response) {
+
+            if(!limit || limit=="" || limit == 0)
+                limit = response.hits.total;
+
+            if( response.hits && response.hits.hits){
+                // collect the title from each response
+                response.hits.hits.forEach(function (hit) {
+                hit._source._id = hit._id;
+                hit._source._sequence = completeResult.length;
+
+                completeResult.push(hit._source);
+                });
             }
-            console.log('[getSearchResponse] opened scroll window, scroll id: ' + result.scrollId);
 
-            getRemainingScrollResults(tableauDataMode, table, result.scrollId, function (err, scrollResult) {
-                if (err) {
-                    abort(err, true);
-                    if(cb){
-                        cb(err, null);
-                    }
-                }
-                console.log('[getSearchResponse] processed remaining scroll results, count: ' + scrollResult.results.length);
-                console.log("[getSearchResponse] appending initial scroll windows results (" + result.numProcessed + ")");
-
-                scrollResult.numProcessed += result.numProcessed;
-                if(!tableauDataMode){
-                    scrollResult.results = scrollResult.results.concat(result.results);
-                }
-                if(cb){
-                    cb(null, scrollResult);
-                }
-            });
-
-        });
+        if ( limit >= completeResult.length) {
+            // ask elasticsearch for the next set of hits from this search
+            client.scroll({
+            scrollId: response._scroll_id,
+            scroll: '1m'
+            }, getMoreUntilDone);
+        } else {
+            console.log('every "test" title', completeResult);
+            if(cb){
+                    cb(null, {results: completeResult, numProcessed: completeResult.length, more: false, scrollId: response._scroll_id });
+            }
+        }
+        });      
     };
+
 
     var openSearchScrollWindow = function (tableauDataMode, table, cb) {
 
